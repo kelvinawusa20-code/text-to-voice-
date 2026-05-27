@@ -1,129 +1,189 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import { useEffect, useMemo } from "react";
+import { Header } from "@/components/layout/Header";
+import { VoiceRecorder } from "@/components/voice/VoiceRecorder";
+import { TranscriptInput } from "@/components/voice/TranscriptInput";
+import { AnalyzeResults } from "@/components/voice/AnalyzeResults";
+import { SettingsPanel } from "@/components/settings/SettingsPanel";
+import { HistoryPanel } from "@/components/history/HistoryPanel";
+import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
+import { useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
+import { useVoiceAnalysis } from "@/hooks/useVoiceAnalysis";
+import { VOICE_OPTIONS } from "@/constants/voiceOptions";
+import { AppStateProvider, useAppState } from "@/lib/state/app-state-context";
 
-export default function AuraClarityGlobal() {
-  const [scriptText, setScriptText] = useState("");
-  const [result, setResult] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [isListening, setIsListening] = useState(false);
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const [selectedVoiceName, setSelectedVoiceName] = useState<string>("");
+function HomePageContent() {
+  const {
+    state,
+    setTranscript,
+    setAnalysisResult,
+    setAnalysisLoading,
+    setSpeechStatus,
+    setTtsStatus,
+    setUiError,
+    setSelectedVoiceName,
+    addHistoryEntry,
+  } = useAppState();
 
-  const recognitionRef = useRef<any>(null);
+  const {
+    currentTranscript,
+    lastAnalysisResult,
+    analysisLoading,
+    speechStatus,
+    ttsStatus,
+    uiError,
+    preferences,
+  } = state;
+
+  const {
+    scriptText,
+    setScriptText,
+    isListening,
+    isSupported: speechRecognitionSupported,
+    supportMessage: recognitionSupportMessage,
+    toggleListening,
+    error: recognitionError,
+  } = useSpeechRecognition(currentTranscript);
+
+  const {
+    voices: synthesisVoices,
+    supported: speechSynthesisSupported,
+    supportMessage: synthesisSupportMessage,
+    speak,
+  } = useSpeechSynthesis();
+
+  const { result, loading, error: analysisError, analyze } = useVoiceAnalysis();
 
   useEffect(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = false;
-      recognitionRef.current.interimResults = true;
-      recognitionRef.current.onresult = (event: any) => {
-        setScriptText(event.results[0][0].transcript);
-      };
-      recognitionRef.current.onerror = () => setIsListening(false);
-      recognitionRef.current.onend = () => setIsListening(false);
+    setTranscript(scriptText);
+  }, [scriptText, setTranscript]);
+
+  useEffect(() => {
+    if (!scriptText && currentTranscript) {
+      setScriptText(currentTranscript);
     }
-    const loadVoices = () => setVoices(window.speechSynthesis.getVoices());
-    loadVoices();
-    window.speechSynthesis.onvoiceschanged = loadVoices;
-  }, []);
+  }, [currentTranscript, scriptText, setScriptText]);
 
-  const toggleListening = () => {
-    if (isListening) {
-      recognitionRef.current?.stop();
-      setIsListening(false);
-    } else {
-      setScriptText(""); 
-      recognitionRef.current?.start();
-      setIsListening(true);
+  useEffect(() => {
+    setSpeechStatus(isListening ? "listening" : "idle");
+    if (recognitionError) {
+      setUiError(recognitionError);
     }
-  };
+  }, [isListening, recognitionError, setSpeechStatus, setUiError]);
 
-  const handleAnalyzeAndSpeak = async () => {
-    if (!scriptText) return alert("Please speak or type something first!");
-    setLoading(true);
-    setResult(null);
+  useEffect(() => {
+    setAnalysisLoading(loading);
+  }, [loading, setAnalysisLoading]);
 
-    const backendUrl = `${process.env.NEXT_PUBLIC_API_URL}/analyze`;
+  useEffect(() => {
+    if (result) {
+      setAnalysisResult(result);
+      addHistoryEntry(scriptText, result, result.analysis);
+    }
+  }, [result, scriptText, setAnalysisResult, addHistoryEntry]);
+
+  useEffect(() => {
+    if (analysisError) {
+      setUiError(analysisError);
+    }
+  }, [analysisError, setUiError]);
+
+  const combinedError = useMemo(
+    () => recognitionError || analysisError || uiError,
+    [recognitionError, analysisError, uiError],
+  );
+
+  const supportWarning = useMemo(() => {
+    if (!recognitionSupportMessage && !synthesisSupportMessage) {
+      return null;
+    }
+
+    return recognitionSupportMessage || synthesisSupportMessage;
+  }, [recognitionSupportMessage, synthesisSupportMessage]);
+
+  const selectedVoiceName = preferences.selectedVoiceName || VOICE_OPTIONS[0]?.value || "";
+  const actionLabel = analysisLoading
+    ? "Analyzing..."
+    : preferences.autoPlayAnalysisResults
+    ? "Analyze and Speak"
+    : "Analyze";
+
+  const handleAnalyze = async () => {
+    const trimmedText = scriptText.trim();
+    if (!trimmedText) {
+      return;
+    }
+
+    setUiError(null);
 
     try {
-      const response = await fetch(backendUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: scriptText }),
-      });
-
-      if (!response.ok) throw new Error("Backend Error");
-
-      const data = await response.json();
-      setResult(data);
-
-      const utterance = new SpeechSynthesisUtterance(scriptText);
-      const voice = voices.find((v) => v.name === selectedVoiceName);
-      if (voice) utterance.voice = voice;
-      window.speechSynthesis.speak(utterance);
-
+      await analyze(trimmedText);
+      if (speechSynthesisSupported && preferences.voicePlaybackEnabled && preferences.autoPlayAnalysisResults) {
+        setTtsStatus("playing");
+        speak(trimmedText, selectedVoiceName);
+        setTtsStatus("idle");
+      }
     } catch (error) {
-      alert("Check if Port 8000 is Public and the terminal is running!");
-    } finally {
-      setLoading(false);
+      const message = error instanceof Error ? error.message : "Analysis failed.";
+      setUiError(message);
     }
   };
 
   return (
-    <div style={{ padding: '40px', fontFamily: 'Arial, sans-serif', maxWidth: '900px', margin: '0 auto', backgroundColor: '#ffffff', minHeight: '100vh' }}>
-      <header style={{ textAlign: 'center', marginBottom: '40px' }}>
-        <h1 style={{ color: '#000', fontSize: '40px', fontWeight: 'bold' }}>Aura Clarity Global</h1>
-        <p style={{ color: '#333', fontSize: '20px' }}>Voice Evaluation & Dialect Analysis</p>
-      </header>
-      
-      <div style={{ marginBottom: '30px', padding: '20px', border: '3px solid #000', borderRadius: '15px' }}>
-        <label style={{ fontWeight: 'bold', fontSize: '22px', display: 'block', marginBottom: '10px' }}>SELECT YOUR TRIBE:</label>
-        <select 
-          value={selectedVoiceName} 
-          onChange={(e) => setSelectedVoiceName(e.target.value)}
-          style={{ width: '100%', padding: '15px', borderRadius: '10px', fontSize: '18px', border: '2px solid #000' }}
-        >
-          <optgroup label="Niger Delta & Edo">
-            <option value="delta-urhobo">Urhobo</option>
-            <option value="delta-isoko">Isoko</option>
-            <option value="delta-itsekiri">Itsekiri</option>
-            <option value="nigeria-pidgin">Waffi (Pidgin)</option>
-          </optgroup>
-          <optgroup label="Major Nigerian Languages">
-            <option value="yoruba">Yoruba</option>
-            <option value="igbo">Igbo</option>
-            <option value="hausa">Hausa</option>
-          </optgroup>
-          <optgroup label="System Voices">
-            {voices.map((v) => <option key={v.name} value={v.name}>{v.name}</option>)}
-          </optgroup>
-        </select>
-      </div>
+    <main className="min-h-screen bg-slate-100 px-6 py-10 sm:px-10 sm:py-14 text-slate-900">
+      <div className="mx-auto max-w-6xl">
+        <Header />
 
-      <div style={{ position: 'relative', marginBottom: '30px' }}>
-        <textarea 
-          style={{ width: '100%', height: '250px', padding: '25px', borderRadius: '20px', fontSize: '24px', fontWeight: 'bold', border: '4px solid #000', boxSizing: 'border-box' }}
-          placeholder="Speak or Type here..."
-          value={scriptText}
-          onChange={(e) => setScriptText(e.target.value)}
+        <VoiceRecorder
+          selectedVoiceName={selectedVoiceName}
+          voiceOptions={VOICE_OPTIONS}
+          voices={synthesisVoices}
+          isListening={isListening}
+          isSpeechRecognitionSupported={speechRecognitionSupported}
+          isMicrophoneEnabled={speechStatus !== "error"}
+          supportMessage={recognitionSupportMessage}
+          toggleListening={toggleListening}
+          onVoiceChange={setSelectedVoiceName}
         />
-        <button onClick={toggleListening} style={{ position: 'absolute', bottom: '20px', right: '20px', backgroundColor: isListening ? '#f00' : '#0070f3', color: '#fff', border: '3px solid #000', borderRadius: '50%', width: '80px', height: '80px', fontSize: '35px' }}>
-          {isListening ? "🛑" : "🎤"}
-        </button>
-      </div>
 
-      <button onClick={handleAnalyzeAndSpeak} disabled={loading} style={{ padding: '25px', backgroundColor: '#000', color: '#fff', borderRadius: '15px', width: '100%', fontSize: '24px', fontWeight: '900' }}>
-        {loading ? "PROCESSING..." : "ANALYZE & PLAYBACK"}
-      </button>
+        <SettingsPanel />
 
-      {result && (
-        <div style={{ marginTop: '40px', padding: '30px', borderRadius: '20px', backgroundColor: '#e6f7ff', border: '4px solid #0070f3' }}>
-          <h2 style={{ marginTop: 0, fontSize: '30px' }}>Aura Score: {result.score}</h2>
-          <p style={{ fontSize: '22px' }}>{result.analysis}</p>
+        <TranscriptInput scriptText={scriptText} onChange={setScriptText} />
+
+        <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <button
+            type="button"
+            onClick={handleAnalyze}
+            disabled={analysisLoading || !scriptText.trim()}
+            className="inline-flex items-center justify-center rounded-3xl bg-slate-900 px-8 py-5 text-lg font-semibold text-white transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-slate-700 disabled:cursor-not-allowed disabled:bg-slate-500"
+          >
+            {analysisLoading ? "Analyzing..." : "Analyze and Speak"}
+          </button>
+
+          {combinedError && (
+            <p className="text-sm font-semibold text-red-700">{combinedError}</p>
+          )}
         </div>
-      )}
-    </div>
+
+        {supportWarning && (
+          <div className="mb-6 rounded-3xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+            {supportWarning}
+          </div>
+        )}
+
+        <AnalyzeResults result={lastAnalysisResult} error={combinedError} />
+
+        <HistoryPanel />
+      </div>
+    </main>
+  );
+}
+
+export default function HomePage() {
+  return (
+    <AppStateProvider>
+      <HomePageContent />
+    </AppStateProvider>
   );
 }
