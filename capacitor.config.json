@@ -1,0 +1,6 @@
+{
+  "appId": "com.kelvin.aura",
+  "appName": "Kelvin Aura",
+  "webDir": "out",
+  "bundledWebRuntime": false
+}

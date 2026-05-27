@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Kelvin Aura</string>
+    <string name="title_activity_main">Kelvin Aura</string>
+    <string name="package_name">com.kelvin.aura</string>
+    <string name="custom_url_scheme">com.kelvin.aura</string>
+</resources>
