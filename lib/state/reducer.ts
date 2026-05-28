@@ -1,7 +1,8 @@
 import { AppAction, AppState, UserPreferences } from "@/lib/state/types";
-import { createSessionState, addHistoryEntry, hydrateSessionState } from "@/lib/session/session";
+import { addHistoryEntry, hydrateSessionState } from "@/lib/session/session";
 import { DEFAULT_PREFERENCES } from "@/lib/preferences/preferences";
 
+// Avoid generating session IDs at module initialization to prevent SSR/client hydration mismatches.
 export const initialAppState: AppState = {
   currentTranscript: "",
   lastAnalysisResult: null,
@@ -10,7 +11,13 @@ export const initialAppState: AppState = {
   ttsStatus: "idle",
   uiError: null,
   preferences: DEFAULT_PREFERENCES,
-  session: createSessionState(),
+  // Session will be initialized on the client during AppStateProvider mount.
+  session: {
+    sessionId: "",
+    startedAt: "",
+    lastActiveAt: "",
+    history: [],
+  },
 };
 
 function hydratePreferences(preferences: Partial<UserPreferences> | undefined): UserPreferences {

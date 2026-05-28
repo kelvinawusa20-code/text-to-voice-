@@ -3,11 +3,11 @@
 import React, { createContext, useContext, useEffect, useMemo, useReducer } from "react";
 import { AppAction, AppState } from "@/lib/state/types";
 import { appReducer, initialAppState } from "@/lib/state/reducer";
-import { storage } from "@/lib/storage/storage";
+import { LocalDataLayer } from "@/lib/data-layer/dataLayer";
 import { createHistoryEntry, createSessionState } from "@/lib/session/session";
 import { AnalysisResponse } from "@/types/analysis";
 
-const STORAGE_KEY = "aura_app_state_v1";
+const dataLayer = new LocalDataLayer();
 
 interface AppStateContextValue {
   state: AppState;
@@ -40,7 +40,7 @@ function persistState(state: AppState) {
       preferences: state.preferences,
       session: state.session,
     };
-    storage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    dataLayer.saveSession(payload);
   } catch {
     // Ignore persistence failures.
   }
@@ -50,47 +50,96 @@ export function AppStateProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, initialAppState);
 
   useEffect(() => {
-    const persisted = storage.getItem(STORAGE_KEY);
-    if (!persisted) {
-      return;
-    }
+    (async () => {
+      const persisted = dataLayer.getSession();
+      if (!persisted) {
+        // No persisted payload: create a client-only session state to avoid SSR random IDs.
+        try {
+          const { createSessionState } = await import("@/lib/session/session");
+          dispatch({ type: "LOAD_PERSISTED_STATE", payload: { session: createSessionState() } });
+        } catch {
+          // fallback: leave empty session
+        }
+        return;
+      }
 
-    try {
-      const parsed = JSON.parse(persisted) as Partial<AppState>;
-      dispatch({ type: "LOAD_PERSISTED_STATE", payload: parsed });
-    } catch {
-      dispatch({ type: "LOAD_PERSISTED_STATE", payload: { session: createSessionState() } });
-    }
+      try {
+        dispatch({ type: "LOAD_PERSISTED_STATE", payload: persisted as Partial<AppState> });
+      } catch {
+        // If parsing fails, initialize a fresh client session
+        try {
+          const { createSessionState } = await import("@/lib/session/session");
+          dispatch({ type: "LOAD_PERSISTED_STATE", payload: { session: createSessionState() } });
+        } catch {
+          // ignore
+        }
+      }
+    })();
   }, []);
 
   useEffect(() => {
     persistState(state);
   }, [state.currentTranscript, state.lastAnalysisResult, state.preferences, state.session]);
 
-  const value = useMemo(
+  const setTranscript = React.useCallback((transcript: string) => dispatch({ type: "SET_TRANSCRIPT", payload: transcript }), [dispatch]);
+  const setAnalysisResult = React.useCallback((result: AnalysisResponse | null) => dispatch({ type: "SET_ANALYSIS_RESULT", payload: result }), [dispatch]);
+  const setAnalysisLoading = React.useCallback((loading: boolean) => dispatch({ type: "SET_ANALYSIS_LOADING", payload: loading }), [dispatch]);
+  const setSpeechStatus = React.useCallback((status: AppState["speechStatus"]) => dispatch({ type: "SET_SPEECH_STATUS", payload: status }), [dispatch]);
+  const setTtsStatus = React.useCallback((status: AppState["ttsStatus"]) => dispatch({ type: "SET_TTS_STATUS", payload: status }), [dispatch]);
+  const setUiError = React.useCallback((message: string | null) => dispatch({ type: "SET_UI_ERROR", payload: message }), [dispatch]);
+  const setSelectedVoiceName = React.useCallback((name: string) => dispatch({ type: "SET_SELECTED_VOICE_NAME", payload: name }), [dispatch]);
+  const setVoicePlaybackEnabled = React.useCallback((enabled: boolean) => dispatch({ type: "SET_VOICE_PLAYBACK_ENABLED", payload: enabled }), [dispatch]);
+  const setAutoPlayAnalysisResults = React.useCallback((enabled: boolean) => dispatch({ type: "SET_AUTO_PLAY_ANALYSIS_RESULTS", payload: enabled }), [dispatch]);
+  const setMicrophoneAutoStart = React.useCallback((enabled: boolean) => dispatch({ type: "SET_MICROPHONE_AUTO_START", payload: enabled }), [dispatch]);
+  const setUiDensity = React.useCallback((density: AppState["preferences"]["uiDensity"]) => dispatch({ type: "SET_UI_DENSITY", payload: density }), [dispatch]);
+  const setLanguageCode = React.useCallback((languageCode: string) => dispatch({ type: "SET_LANGUAGE_CODE", payload: languageCode }), [dispatch]);
+  const addHistoryEntry = React.useCallback((transcript: string, result: AnalysisResponse, summaryText: string) => dispatch({ type: "ADD_HISTORY_ENTRY", payload: createHistoryEntry(transcript, result, summaryText) }), [dispatch]);
+  const removeHistoryEntry = React.useCallback((id: string) => dispatch({ type: "REMOVE_HISTORY_ENTRY", payload: id }), [dispatch]);
+  const clearHistory = React.useCallback(() => dispatch({ type: "CLEAR_HISTORY" }), [dispatch]);
+  const clearState = React.useCallback(() => dispatch({ type: "CLEAR_STATE" }), [dispatch]);
+  const resetSession = React.useCallback(() => dispatch({ type: "RESET_SESSION" }), [dispatch]);
+
+  const value: AppStateContextValue = React.useMemo(
     () => ({
       state,
-      setTranscript: (transcript: string) => dispatch({ type: "SET_TRANSCRIPT", payload: transcript }),
-      setAnalysisResult: (result: AnalysisResponse | null) => dispatch({ type: "SET_ANALYSIS_RESULT", payload: result }),
-      setAnalysisLoading: (loading: boolean) => dispatch({ type: "SET_ANALYSIS_LOADING", payload: loading }),
-      setSpeechStatus: (status: AppState["speechStatus"]) => dispatch({ type: "SET_SPEECH_STATUS", payload: status }),
-      setTtsStatus: (status: AppState["ttsStatus"]) => dispatch({ type: "SET_TTS_STATUS", payload: status }),
-          setUiError: (message: string | null) => dispatch({ type: "SET_UI_ERROR", payload: message }),
-      setSelectedVoiceName: (name: string) => dispatch({ type: "SET_SELECTED_VOICE_NAME", payload: name }),
-      setVoicePlaybackEnabled: (enabled: boolean) => dispatch({ type: "SET_VOICE_PLAYBACK_ENABLED", payload: enabled }),
-      setAutoPlayAnalysisResults: (enabled: boolean) => dispatch({ type: "SET_AUTO_PLAY_ANALYSIS_RESULTS", payload: enabled }),
-      setMicrophoneAutoStart: (enabled: boolean) => dispatch({ type: "SET_MICROPHONE_AUTO_START", payload: enabled }),
-      setUiDensity: (density: AppState["preferences"]["uiDensity"]) =>
-        dispatch({ type: "SET_UI_DENSITY", payload: density }),
-      setLanguageCode: (languageCode: string) => dispatch({ type: "SET_LANGUAGE_CODE", payload: languageCode }),
-      addHistoryEntry: (transcript: string, result: AnalysisResponse, summaryText: string) =>
-        dispatch({ type: "ADD_HISTORY_ENTRY", payload: createHistoryEntry(transcript, result, summaryText) }),
-      removeHistoryEntry: (id: string) => dispatch({ type: "REMOVE_HISTORY_ENTRY", payload: id }),
-      clearHistory: () => dispatch({ type: "CLEAR_HISTORY" }),
-      clearState: () => dispatch({ type: "CLEAR_STATE" }),
-      resetSession: () => dispatch({ type: "RESET_SESSION" }),
+      setTranscript,
+      setAnalysisResult,
+      setAnalysisLoading,
+      setSpeechStatus,
+      setTtsStatus,
+      setUiError,
+      setSelectedVoiceName,
+      setVoicePlaybackEnabled,
+      setAutoPlayAnalysisResults,
+      setMicrophoneAutoStart,
+      setUiDensity,
+      setLanguageCode,
+      addHistoryEntry,
+      removeHistoryEntry,
+      clearHistory,
+      clearState,
+      resetSession,
     }),
-    [state],
+    [
+      state,
+      setTranscript,
+      setAnalysisResult,
+      setAnalysisLoading,
+      setSpeechStatus,
+      setTtsStatus,
+      setUiError,
+      setSelectedVoiceName,
+      setVoicePlaybackEnabled,
+      setAutoPlayAnalysisResults,
+      setMicrophoneAutoStart,
+      setUiDensity,
+      setLanguageCode,
+      addHistoryEntry,
+      removeHistoryEntry,
+      clearHistory,
+      clearState,
+      resetSession,
+    ],
   );
 
   return <AppStateContext.Provider value={value}>{children}</AppStateContext.Provider>;

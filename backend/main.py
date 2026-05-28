@@ -47,6 +47,29 @@ async def analyze_text(request: AnalysisRequest):
         "analysis": analysis
     }
 
+# Wire migration routers (stubs) - safe includes only
+import logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+try:
+    logger.info("Attempting to import migration routes...")
+    from backend.routes.migration import map as migrate_map
+    from backend.routes.migration import stage as migrate_stage
+    from backend.routes.migration import merge as migrate_merge
+    from backend.routes.migration import status as migrate_status
+
+    logger.info("Imported migration routes successfully, registering with app...")
+    app.include_router(migrate_map.router, prefix="/migrate")
+    app.include_router(migrate_stage.router, prefix="/migrate")
+    app.include_router(migrate_merge.router, prefix="/migrate")
+    app.include_router(migrate_status.router, prefix="/migrate")
+    logger.info("Migration routes registered successfully")
+except Exception as e:
+    logger.error(f"Error importing/registering migration routes: {type(e).__name__}: {e}", exc_info=True)
+    # If routes cannot be imported in some environments, skip wiring
+    pass
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

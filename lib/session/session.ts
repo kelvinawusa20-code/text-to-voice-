@@ -1,4 +1,6 @@
 import { AnalysisResponse } from "@/types/analysis";
+import { getOrCreateUserMetadata } from "@/lib/user/user-session";
+import { UserMetadata } from "@/lib/user/user-metadata";
 
 export const MAX_HISTORY_ENTRIES = 10;
 
@@ -8,6 +10,7 @@ export type AnalysisHistoryEntry = {
   transcript: string;
   result: AnalysisResponse;
   summaryText: string;
+  userMetadata?: UserMetadata; // lightweight anonymous metadata for SaaS readiness
 };
 
 export type SessionState = {
@@ -15,6 +18,9 @@ export type SessionState = {
   startedAt: string;
   lastActiveAt: string;
   history: AnalysisHistoryEntry[];
+  // optional anonymous identifiers for future SaaS mapping
+  anonymousUserId?: string;
+  deviceId?: string;
 };
 
 function createSessionId(): string {
@@ -40,12 +46,14 @@ export function createHistoryEntry(
   result: AnalysisResponse,
   summaryText: string,
 ): AnalysisHistoryEntry {
+  const meta = getOrCreateUserMetadata();
   return {
     id: createSessionId(),
     timestamp: new Date().toISOString(),
     transcript,
     result,
     summaryText,
+    userMetadata: meta,
   };
 }
 
